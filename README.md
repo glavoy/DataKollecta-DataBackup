@@ -51,6 +51,6 @@ retried up to `MAX_ATTEMPTS` times (default 3), `RETRY_DELAY_SECONDS` apart
 (default 20s), before the whole run is reported as failed — covers a wifi
 blip or a laptop briefly asleep mid-run without needing a manual re-run. The
 Supabase client also uses a generous request timeout
-(`POSTGREST_TIMEOUT_SECONDS`, default 300s) rather than the library default,
+(`POSTGREST_TIMEOUT_SECONDS`, default 60s) rather than the library default,
 since field connections can be slow without actually being dead. All three
 are constants at the top of `export_data.py`, not `.env` settings.

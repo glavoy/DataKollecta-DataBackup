@@ -27,8 +27,9 @@ from supabase import Client, ClientOptions, create_client
 PAGE_SIZE = 1000
 
 # Field connections (e.g. Uganda) can be slow but usually still come through,
-# so this is generous on purpose rather than failing fast.
-POSTGREST_TIMEOUT_SECONDS = 300
+# so this has some slack rather than failing fast - but a real hang should
+# still get caught (and retried) well within a few minutes.
+POSTGREST_TIMEOUT_SECONDS = 60
 
 # A project's export (fetch + write) is retried this many times total before
 # the run is reported as failed - covers a transient blip (wifi drop, laptop
