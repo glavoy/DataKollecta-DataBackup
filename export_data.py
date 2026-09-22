@@ -4,14 +4,18 @@ to CSV files.
 Pulls the CRF/form definitions, submissions (flattened from JSONB), and
 formchanges audit log for each project and writes one CSV per table into
 <project_slug>/<timestamp>/ under the BACKUP_OUTPUT_ROOT directory (see .env).
+Appends a summary to backup.log and emails that summary on every run -
+success or failure (see .env for SMTP settings).
 
 Usage:
     python export_data.py
 """
 import csv
 import os
+import smtplib
 import sys
 from datetime import datetime
+from email.message import EmailMessage
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -20,6 +24,7 @@ from supabase import Client, create_client
 PAGE_SIZE = 1000
 
 BASE_DIR = Path(__file__).resolve().parent
+LOG_PATH = BASE_DIR / "backup.log"
 
 
 def get_client() -> Client:
@@ -35,8 +40,8 @@ def get_project(client: Client, project_code: str) -> dict:
 
     all_projects = client.table("projects").select("slug").execute().data
     available = ", ".join(sorted(p["slug"] for p in all_projects if p.get("slug")))
-    sys.exit(
-        f"No project found with slug '{project_code}'.\n"
+    raise RuntimeError(
+        f"No project found with slug '{project_code}'. "
         f"Available project slugs: {available or '(none found)'}"
     )
 
@@ -124,28 +129,97 @@ def export_formchanges(client: Client, project_id: str, output_dir: Path) -> Non
     print(f"Wrote {len(rows)} rows to formchanges.csv")
 
 
+def send_email(subject: str, body: str) -> None:
+    host = os.environ["SMTP_HOST"]
+    port = int(os.environ.get("SMTP_PORT", "587"))
+    username = os.environ["SMTP_USERNAME"]
+    password = os.environ["SMTP_PASSWORD"]
+    sender = os.environ.get("SMTP_FROM", username)
+    recipients = os.environ["NOTIFY_EMAIL"]
+    use_ssl = os.environ.get("SMTP_USE_SSL", "false").strip().lower() == "true"
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = recipients
+    msg.set_content(body)
+
+    smtp_cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+    with smtp_cls(host, port) as server:
+        if not use_ssl:
+            server.starttls()
+        server.login(username, password)
+        server.send_message(msg)
+
+
+def log_run(lines: list[str]) -> None:
+    with LOG_PATH.open("a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n\n")
+
+
 def main() -> None:
     load_dotenv(BASE_DIR / ".env")
-    project_codes = [code.strip() for code in os.environ["PROJECT_CODES"].split(",") if code.strip()]
-    if not project_codes:
-        sys.exit("PROJECT_CODES is empty. Set it to a comma-separated list of project slugs.")
-    output_root = Path(os.environ["BACKUP_OUTPUT_ROOT"])
-
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    client = get_client()
+    backed_up: list[str] = []
+    failed_project_code: str | None = None
+    error_message: str | None = None
 
-    for project_code in project_codes:
-        project = get_project(client, project_code)
-        project_id = project["id"]
-        print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
+    try:
+        project_codes = [code.strip() for code in os.environ["PROJECT_CODES"].split(",") if code.strip()]
+        if not project_codes:
+            raise RuntimeError("PROJECT_CODES is empty. Set it to a comma-separated list of project slugs.")
+        output_root = Path(os.environ["BACKUP_OUTPUT_ROOT"])
+        client = get_client()
 
-        project_output_dir = output_root / project["slug"] / run_timestamp
-        project_output_dir.mkdir(parents=True, exist_ok=True)
-        export_submissions(client, project_id, project_output_dir)
-        export_formchanges(client, project_id, project_output_dir)
-        print(f"Done. Files written to {project_output_dir}")
+        for project_code in project_codes:
+            failed_project_code = project_code
+            project = get_project(client, project_code)
+            project_id = project["id"]
+            print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
 
-    print(f"All projects exported to {output_root}")
+            project_output_dir = output_root / project["slug"] / run_timestamp
+            project_output_dir.mkdir(parents=True, exist_ok=True)
+            export_submissions(client, project_id, project_output_dir)
+            export_formchanges(client, project_id, project_output_dir)
+            print(f"Done. Files written to {project_output_dir}")
+            backed_up.append(project["slug"])
+
+        failed_project_code = None
+    except Exception as exc:
+        error_message = str(exc)
+
+    if error_message:
+        subject = f"DataKollecta backup FAILED - {run_timestamp}"
+        lines = [
+            f"Run: {run_timestamp}",
+            "Status: FAILED",
+            f"Backed up before failure: {', '.join(backed_up) or '(none)'}",
+            f"Failed on project: {failed_project_code or '(before project loop started)'}",
+            f"Error: {error_message}",
+        ]
+    else:
+        subject = f"DataKollecta backup succeeded - {run_timestamp}"
+        lines = [
+            f"Run: {run_timestamp}",
+            "Status: SUCCESS",
+            f"Backed up: {', '.join(backed_up)}",
+        ]
+
+    body = "\n".join(lines)
+    print(body)
+
+    try:
+        log_run(lines)
+    except Exception as exc:
+        print(f"Warning: failed to write {LOG_PATH}: {exc}")
+
+    try:
+        send_email(subject, body)
+    except Exception as exc:
+        print(f"Warning: failed to send notification email: {exc}")
+
+    if error_message:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

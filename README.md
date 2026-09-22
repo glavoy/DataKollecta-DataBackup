@@ -22,6 +22,11 @@ Edit `.env` and fill in:
   `prismcss2026,eduassessment,critical_malaria`
 - `BACKUP_OUTPUT_ROOT` — absolute path to the directory backups are written
   under (e.g. a synced cloud-storage folder)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_SSL`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+  `SMTP_FROM`, `NOTIFY_EMAIL` — SMTP settings used to email a summary on every
+  run. `SMTP_USE_SSL=true` connects with implicit TLS (typically port 465);
+  otherwise the script connects plain and upgrades with STARTTLS (typically
+  port 587). `NOTIFY_EMAIL` accepts a comma-separated list of recipients.
 
 ## Run
 
@@ -32,6 +37,11 @@ python export_data.py
 Each run backs up every project listed in `PROJECT_CODES`. CSV files for each
 project are written to `<project_slug>/<timestamp>/` under
 `BACKUP_OUTPUT_ROOT`, with all projects in the same run sharing one
-timestamp. If a slug in `PROJECT_CODES` doesn't match any project, the script
-prints the available slugs and stops (projects processed earlier in the list
-keep their output).
+timestamp. If a slug in `PROJECT_CODES` doesn't match any project, the run is
+recorded as failed and processing stops there (projects backed up earlier in
+the list keep their output).
+
+Every run — success or failure — appends a summary to `backup.log` (slugs
+backed up, or what failed and why) and emails the same summary to
+`NOTIFY_EMAIL`. A failed email send is logged to the console but does not
+fail the run; a failed backup run exits with a non-zero status code.
