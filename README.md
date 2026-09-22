@@ -20,6 +20,8 @@ Edit `.env` and fill in:
 - `SUPABASE_SERVICE_ROLE_KEY` — Project Settings → API → service_role key (bypasses RLS; keep this secret, never commit it)
 - `PROJECT_CODES` — comma-separated list of project slugs to back up, e.g.
   `prismcss2026,eduassessment,critical_malaria`
+- `BACKUP_OUTPUT_ROOT` — absolute path to the directory backups are written
+  under (e.g. a synced cloud-storage folder)
 
 ## Run
 
@@ -28,10 +30,8 @@ python export_data.py
 ```
 
 Each run backs up every project listed in `PROJECT_CODES`. CSV files for each
-project are written to
-`<project_slug>/<timestamp>/` under
-`ProtonDrive....DataKollecta-Backup/output`
-(synced via ProtonDrive), with all projects in the same run sharing one
+project are written to `<project_slug>/<timestamp>/` under
+`BACKUP_OUTPUT_ROOT`, with all projects in the same run sharing one
 timestamp. If a slug in `PROJECT_CODES` doesn't match any project, the script
 prints the available slugs and stops (projects processed earlier in the list
 keep their output).

@@ -3,7 +3,7 @@ to CSV files.
 
 Pulls the CRF/form definitions, submissions (flattened from JSONB), and
 formchanges audit log for each project and writes one CSV per table into
-<project_slug>/<timestamp>/ under OUTPUT_ROOT.
+<project_slug>/<timestamp>/ under the BACKUP_OUTPUT_ROOT directory (see .env).
 
 Usage:
     python export_data.py
@@ -20,9 +20,6 @@ from supabase import Client, create_client
 PAGE_SIZE = 1000
 
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_ROOT = Path(
-    "/Users/glavoy/Library/CloudStorage/ProtonDrive-glavoy@pm.me-folder/Apps/DataKollecta-DataBackup/output"
-)
 
 
 def get_client() -> Client:
@@ -132,6 +129,7 @@ def main() -> None:
     project_codes = [code.strip() for code in os.environ["PROJECT_CODES"].split(",") if code.strip()]
     if not project_codes:
         sys.exit("PROJECT_CODES is empty. Set it to a comma-separated list of project slugs.")
+    output_root = Path(os.environ["BACKUP_OUTPUT_ROOT"])
 
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     client = get_client()
@@ -141,13 +139,13 @@ def main() -> None:
         project_id = project["id"]
         print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
 
-        project_output_dir = OUTPUT_ROOT / project["slug"] / run_timestamp
+        project_output_dir = output_root / project["slug"] / run_timestamp
         project_output_dir.mkdir(parents=True, exist_ok=True)
         export_submissions(client, project_id, project_output_dir)
         export_formchanges(client, project_id, project_output_dir)
         print(f"Done. Files written to {project_output_dir}")
 
-    print(f"All projects exported to {OUTPUT_ROOT}")
+    print(f"All projects exported to {output_root}")
 
 
 if __name__ == "__main__":
