@@ -1,4 +1,4 @@
-# prismcss_download_data
+# DataKollecta-DataBackup
 
 Exports all Supabase data for one or more projects (matched by `projects.slug`,
 e.g. `prismcss2026`) to CSV files: one per form/CRF table (`hh_info.csv`,
