@@ -4,6 +4,8 @@ to CSV files.
 Pulls the CRF/form definitions, submissions (flattened from JSONB), and
 formchanges audit log for each project and writes one CSV per table into
 <project_slug>/<timestamp>/ under the BACKUP_OUTPUT_ROOT directory (see .env).
+A project's export is retried a few times on transient failures (network
+blips, a laptop briefly asleep) before the run is reported as failed.
 Appends a summary to backup.log and emails that summary on every run -
 success or failure (see .env for SMTP settings).
 
@@ -14,14 +16,25 @@ import csv
 import os
 import smtplib
 import sys
+import time
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 
 from dotenv import load_dotenv
-from supabase import Client, create_client
+from supabase import Client, ClientOptions, create_client
 
 PAGE_SIZE = 1000
+
+# Field connections (e.g. Uganda) can be slow but usually still come through,
+# so this is generous on purpose rather than failing fast.
+POSTGREST_TIMEOUT_SECONDS = 300
+
+# A project's export (fetch + write) is retried this many times total before
+# the run is reported as failed - covers a transient blip (wifi drop, laptop
+# briefly asleep) without needing a person to re-run it by hand.
+MAX_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 20
 
 BASE_DIR = Path(__file__).resolve().parent
 LOG_PATH = BASE_DIR / "backup.log"
@@ -30,7 +43,8 @@ LOG_PATH = BASE_DIR / "backup.log"
 def get_client() -> Client:
     url = os.environ["SUPABASE_URL"]
     key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-    return create_client(url, key)
+    options = ClientOptions(postgrest_client_timeout=POSTGREST_TIMEOUT_SECONDS)
+    return create_client(url, key, options=options)
 
 
 def get_project(client: Client, project_code: str) -> dict:
@@ -173,14 +187,28 @@ def main() -> None:
 
         for project_code in project_codes:
             failed_project_code = project_code
-            project = get_project(client, project_code)
-            project_id = project["id"]
-            print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
+            project_output_dir = output_root / project_code / run_timestamp
 
-            project_output_dir = output_root / project["slug"] / run_timestamp
-            project_output_dir.mkdir(parents=True, exist_ok=True)
-            export_submissions(client, project_id, project_output_dir)
-            export_formchanges(client, project_id, project_output_dir)
+            last_exc: Exception | None = None
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                try:
+                    project = get_project(client, project_code)
+                    project_id = project["id"]
+                    print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
+
+                    project_output_dir.mkdir(parents=True, exist_ok=True)
+                    export_submissions(client, project_id, project_output_dir)
+                    export_formchanges(client, project_id, project_output_dir)
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    print(f"Attempt {attempt}/{MAX_ATTEMPTS} for '{project_code}' failed: {exc}")
+                    if attempt < MAX_ATTEMPTS:
+                        time.sleep(RETRY_DELAY_SECONDS)
+            if last_exc is not None:
+                raise last_exc
+
             print(f"Done. Files written to {project_output_dir}")
             backed_up.append(project["slug"])
 
