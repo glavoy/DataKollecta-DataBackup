@@ -1,15 +1,15 @@
-"""Export all Supabase data for a project (by project code / slug) to CSV files.
+"""Export all Supabase data for one or more projects (by project code / slug)
+to CSV files.
 
 Pulls the CRF/form definitions, submissions (flattened from JSONB), and
-formchanges audit log for a single project and writes one CSV per table
-into the output/ directory.
+formchanges audit log for each project and writes one CSV per table into
+output/<project_slug>/<timestamp>/.
 
 Usage:
     python export_data.py
 """
 import csv
 import os
-import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +21,6 @@ PAGE_SIZE = 1000
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_ROOT = BASE_DIR / "output"
-OUTPUT_DIR = OUTPUT_ROOT / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
 def get_client() -> Client:
@@ -91,7 +90,7 @@ def write_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
             writer.writerow(row)
 
 
-def export_submissions(client: Client, project_id: str) -> None:
+def export_submissions(client: Client, project_id: str, output_dir: Path) -> None:
     field_order = get_crf_field_order(client, project_id)
     submissions = fetch_paginated(client, "submissions", project_id)
 
@@ -103,11 +102,11 @@ def export_submissions(client: Client, project_id: str) -> None:
     for table_name, data_rows in by_table.items():
         preferred = field_order.get(table_name, [])
         columns = build_column_order(preferred, data_rows)
-        write_csv(OUTPUT_DIR / f"{table_name}.csv", columns, data_rows)
+        write_csv(output_dir / f"{table_name}.csv", columns, data_rows)
         print(f"Wrote {len(data_rows)} rows to {table_name}.csv")
 
 
-def export_formchanges(client: Client, project_id: str) -> None:
+def export_formchanges(client: Client, project_id: str, output_dir: Path) -> None:
     rows = fetch_paginated(client, "formchanges", project_id)
     columns = build_column_order(
         [
@@ -122,34 +121,31 @@ def export_formchanges(client: Client, project_id: str) -> None:
         ],
         rows,
     )
-    write_csv(OUTPUT_DIR / "formchanges.csv", columns, rows)
+    write_csv(output_dir / "formchanges.csv", columns, rows)
     print(f"Wrote {len(rows)} rows to formchanges.csv")
 
 
 def main() -> None:
     load_dotenv(BASE_DIR / ".env")
-    project_code = os.environ["PROJECT_CODE"]
+    project_codes = [code.strip() for code in os.environ["PROJECT_CODES"].split(",") if code.strip()]
+    if not project_codes:
+        sys.exit("PROJECT_CODES is empty. Set it to a comma-separated list of project slugs.")
 
+    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     client = get_client()
-    project = get_project(client, project_code)
-    project_id = project["id"]
-    print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    export_submissions(client, project_id)
-    export_formchanges(client, project_id)
-    print(f"Done. Files written to {OUTPUT_DIR}")
+    for project_code in project_codes:
+        project = get_project(client, project_code)
+        project_id = project["id"]
+        print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
 
-    publish_latest()
-    print(f"Latest copy published to {OUTPUT_ROOT}")
+        project_output_dir = OUTPUT_ROOT / project["slug"] / run_timestamp
+        project_output_dir.mkdir(parents=True, exist_ok=True)
+        export_submissions(client, project_id, project_output_dir)
+        export_formchanges(client, project_id, project_output_dir)
+        print(f"Done. Files written to {project_output_dir}")
 
-
-def publish_latest() -> None:
-    """Copy this run's CSVs into output/ root as the 'latest' extract."""
-    for stale in OUTPUT_ROOT.glob("*.csv"):
-        stale.unlink()
-    for csv_file in OUTPUT_DIR.glob("*.csv"):
-        shutil.copy2(csv_file, OUTPUT_ROOT / csv_file.name)
+    print(f"All projects exported to {OUTPUT_ROOT}")
 
 
 if __name__ == "__main__":
