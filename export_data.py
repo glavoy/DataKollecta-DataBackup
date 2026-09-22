@@ -3,7 +3,7 @@ to CSV files.
 
 Pulls the CRF/form definitions, submissions (flattened from JSONB), and
 formchanges audit log for each project and writes one CSV per table into
-output/<project_slug>/<timestamp>/.
+<project_slug>/<timestamp>/ under OUTPUT_ROOT.
 
 Usage:
     python export_data.py
@@ -20,7 +20,9 @@ from supabase import Client, create_client
 PAGE_SIZE = 1000
 
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_ROOT = BASE_DIR / "output"
+OUTPUT_ROOT = Path(
+    "/Users/glavoy/Library/CloudStorage/ProtonDrive-glavoy@pm.me-folder/Apps/DataKollecta-DataBackup/output"
+)
 
 
 def get_client() -> Client:

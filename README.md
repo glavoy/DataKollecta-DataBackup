@@ -28,7 +28,10 @@ python export_data.py
 ```
 
 Each run backs up every project listed in `PROJECT_CODES`. CSV files for each
-project are written to `output/<project_slug>/<timestamp>/`, with all
-projects in the same run sharing one timestamp. If a slug in `PROJECT_CODES`
-doesn't match any project, the script prints the available slugs and stops
-(projects processed earlier in the list keep their output).
+project are written to
+`<project_slug>/<timestamp>/` under
+`ProtonDrive....DataKollecta-Backup/output`
+(synced via ProtonDrive), with all projects in the same run sharing one
+timestamp. If a slug in `PROJECT_CODES` doesn't match any project, the script
+prints the available slugs and stops (projects processed earlier in the list
+keep their output).
