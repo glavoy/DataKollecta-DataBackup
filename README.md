@@ -22,6 +22,11 @@ Edit `.env` and fill in:
   `prismcss2026,eduassessment,critical_malaria`
 - `BACKUP_OUTPUT_ROOT` — absolute path to the directory backups are written
   under (e.g. a synced cloud-storage folder)
+- `DATA_STATUS` — optional: `all` (the default), `test` or `deployed`. Every
+  form CSV leads with a `data_status` column saying whether the survey was in
+  test or deployed when the server first received that record; this narrows
+  the export to one of them, and `formchanges.csv` to the changes for those
+  records. Leave it at `all` for backups.
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_SSL`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
   `SMTP_FROM`, `NOTIFY_EMAIL` — SMTP settings used to email a summary on every
   run. `SMTP_USE_SSL=true` connects with implicit TLS (typically port 465);

@@ -6,6 +6,11 @@ formchanges audit log for each project and writes one CSV per table into
 <project_slug>/<timestamp>/ under the BACKUP_OUTPUT_ROOT directory (see .env).
 A project's export is retried a few times on transient failures (network
 blips, a laptop briefly asleep) before the run is reported as failed.
+
+Every submissions CSV leads with a `data_status` column (test | deployed: the
+survey's status when the server first received the record). DATA_STATUS in
+.env narrows the export to one of them; it defaults to `all`, because a backup
+should be complete.
 Appends a summary to backup.log and emails that summary on every run -
 success or failure (see .env for SMTP settings).
 
@@ -36,6 +41,9 @@ POSTGREST_TIMEOUT_SECONDS = 60
 # briefly asleep) without needing a person to re-run it by hand.
 MAX_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 20
+
+# submissions.data_status values, plus "all" for no filter.
+DATA_STATUS_CHOICES = ("all", "test", "deployed")
 
 BASE_DIR = Path(__file__).resolve().parent
 LOG_PATH = BASE_DIR / "backup.log"
@@ -71,14 +79,27 @@ def get_crf_field_order(client: Client, project_id: str) -> dict[str, list[str]]
     return field_order
 
 
-def fetch_paginated(client: Client, table: str, project_id: str) -> list[dict]:
+def get_data_status_filter() -> str:
+    value = os.environ.get("DATA_STATUS", "all").strip().lower() or "all"
+    if value not in DATA_STATUS_CHOICES:
+        raise RuntimeError(
+            f"DATA_STATUS must be one of {', '.join(DATA_STATUS_CHOICES)}; got '{value}'."
+        )
+    return value
+
+
+def fetch_paginated(
+    client: Client, table: str, project_id: str, data_status: str = "all"
+) -> list[dict]:
     rows: list[dict] = []
     start = 0
     while True:
+        query = client.table(table).select("*").eq("project_id", project_id)
+        if data_status != "all":
+            query = query.eq("data_status", data_status)
         resp = (
-            client.table(table)
-            .select("*")
-            .eq("project_id", project_id)
+            query
+            .order("id")
             .range(start, start + PAGE_SIZE - 1)
             .execute()
         )
@@ -109,24 +130,46 @@ def write_csv(path: Path, columns: list[str], rows: list[dict]) -> None:
             writer.writerow(row)
 
 
-def export_submissions(client: Client, project_id: str, output_dir: Path) -> None:
+def submission_row(sub: dict) -> dict:
+    """One CSV row: the record's answers, labelled test or deployed.
+
+    `data_status` is a column of the submission, not a key in its `data`, so
+    it has to be added here. It is merged in after the answers, so a question
+    that happened to be called `data_status` could never mask it;
+    export_submissions puts it in the first column.
+    """
+    return {**(sub.get("data") or {}), "data_status": sub.get("data_status")}
+
+
+def export_submissions(
+    client: Client, project_id: str, output_dir: Path, data_status: str = "all"
+) -> set[str]:
+    """Writes one CSV per form and returns the exported records' local ids."""
     field_order = get_crf_field_order(client, project_id)
-    submissions = fetch_paginated(client, "submissions", project_id)
+    submissions = fetch_paginated(client, "submissions", project_id, data_status)
 
     by_table: dict[str, list[dict]] = {}
     for sub in submissions:
         table_name = sub["table_name"]
-        by_table.setdefault(table_name, []).append(sub.get("data") or {})
+        by_table.setdefault(table_name, []).append(submission_row(sub))
 
     for table_name, data_rows in by_table.items():
-        preferred = field_order.get(table_name, [])
+        preferred = ["data_status", *field_order.get(table_name, [])]
         columns = build_column_order(preferred, data_rows)
         write_csv(output_dir / f"{table_name}.csv", columns, data_rows)
         print(f"Wrote {len(data_rows)} rows to {table_name}.csv")
 
+    return {sub["local_unique_id"] for sub in submissions}
 
-def export_formchanges(client: Client, project_id: str, output_dir: Path) -> None:
+
+def export_formchanges(
+    client: Client, project_id: str, output_dir: Path, record_ids: set[str] | None = None
+) -> None:
+    """Writes formchanges.csv. With [record_ids], only the changes to those
+    records -- so a filtered export's change log matches its records."""
     rows = fetch_paginated(client, "formchanges", project_id)
+    if record_ids is not None:
+        rows = [row for row in rows if row.get("record_uuid") in record_ids]
     columns = build_column_order(
         [
             "formchanges_uuid",
@@ -184,6 +227,7 @@ def main() -> None:
         if not project_codes:
             raise RuntimeError("PROJECT_CODES is empty. Set it to a comma-separated list of project slugs.")
         output_root = Path(os.environ["BACKUP_OUTPUT_ROOT"])
+        data_status = get_data_status_filter()
         client = get_client()
 
         for project_code in project_codes:
@@ -195,11 +239,21 @@ def main() -> None:
                 try:
                     project = get_project(client, project_code)
                     project_id = project["id"]
-                    print(f"Exporting project '{project['name']}' (slug={project['slug']}, id={project_id})")
+                    print(
+                        f"Exporting project '{project['name']}' (slug={project['slug']}, "
+                        f"id={project_id}, data_status={data_status})"
+                    )
 
                     project_output_dir.mkdir(parents=True, exist_ok=True)
-                    export_submissions(client, project_id, project_output_dir)
-                    export_formchanges(client, project_id, project_output_dir)
+                    record_ids = export_submissions(
+                        client, project_id, project_output_dir, data_status
+                    )
+                    export_formchanges(
+                        client,
+                        project_id,
+                        project_output_dir,
+                        None if data_status == "all" else record_ids,
+                    )
                     last_exc = None
                     break
                 except Exception as exc:
