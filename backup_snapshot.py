@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Explicit full-snapshot preparation, separate from the scheduled CSV utility.
 Default output is encrypted. No production restore is supported by this tool.
-Record operational approval, key custody, scheduling and platform recovery in Word.
+Scheduling, key custody and platform recovery: DK-SOP-001 §7 (DataKollecta-Validation).
 """
 import argparse
 import hashlib

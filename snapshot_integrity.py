@@ -1,6 +1,6 @@
 """Integrity manifests for complete snapshots; no network or restore side effects.
 The manifest proves bytes, not clinical completeness or recovery. Coverage and
-restore reconciliation are separately reviewed in the Word recovery record.
+restore reconciliation are recorded on the Restore Test Record (DK-SOP-001 Appendix E).
 """
 import hashlib
 import json
